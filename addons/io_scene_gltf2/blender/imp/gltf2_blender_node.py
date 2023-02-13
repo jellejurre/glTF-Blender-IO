@@ -231,7 +231,7 @@ class BlenderNode():
             mesh = bpy.data.meshes[pymesh.blender_name[cache_key]]
         else:
             gltf.log.info("Blender create Mesh node %s", pymesh.name or pynode.mesh)
-            mesh = BlenderMesh.create(gltf, pynode.mesh, pynode.skin)
+            mesh = BlenderMesh.create(gltf, pynode.mesh, pynode.skin, vnode)
             if cache_key is not None:
                 pymesh.blender_name[cache_key] = mesh.name
 

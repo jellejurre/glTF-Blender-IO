@@ -33,9 +33,9 @@ class BlenderMesh():
         raise RuntimeError("%s should not be instantiated" % cls)
 
     @staticmethod
-    def create(gltf, mesh_idx, skin_idx):
+    def create(gltf, mesh_idx, skin_idx, vnode):
         """Mesh creation."""
-        return create_mesh(gltf, mesh_idx, skin_idx)
+        return create_mesh(gltf, mesh_idx, skin_idx, vnode)
 
 
 # Maximum number of TEXCOORD_n/COLOR_n sets to import
@@ -43,7 +43,7 @@ UV_MAX = 8
 COLOR_MAX = 8
 
 
-def create_mesh(gltf, mesh_idx, skin_idx):
+def create_mesh(gltf, mesh_idx, skin_idx, vnode):
     pymesh = gltf.data.meshes[mesh_idx]
 
     import_user_extensions('gather_import_mesh_before_hook', gltf, pymesh)
@@ -56,7 +56,7 @@ def create_mesh(gltf, mesh_idx, skin_idx):
     tmp_ob = None
     try:
         tmp_ob = bpy.data.objects.new('##gltf-import:tmp-object##', mesh)
-        do_primitives(gltf, mesh_idx, skin_idx, mesh, tmp_ob)
+        do_primitives(gltf, mesh_idx, skin_idx, mesh, tmp_ob, vnode)
         set_extras(mesh, gltf.data.meshes[mesh_idx].extras, exclude=['targetNames'])
 
     finally:
@@ -68,7 +68,7 @@ def create_mesh(gltf, mesh_idx, skin_idx):
     return mesh
 
 
-def do_primitives(gltf, mesh_idx, skin_idx, mesh, ob):
+def do_primitives(gltf, mesh_idx, skin_idx, mesh, ob, vnode):
     """Put all primitive data into the mesh."""
     pymesh = gltf.data.meshes[mesh_idx]
 
@@ -317,15 +317,23 @@ def do_primitives(gltf, mesh_idx, skin_idx, mesh, ob):
     mesh.polygons.foreach_set('loop_start', loop_starts)
     mesh.polygons.foreach_set('loop_total', loop_totals)
 
-    for uv_i in range(num_uvs):
-        name = 'UVMap' if uv_i == 0 else 'UVMap.%03d' % uv_i
+    for uv_i in range(2):
+        if(uv_i < num_uvs):
+            name = 'UVMap' if uv_i == 0 else 'UVMap.%03d' % uv_i
+            layer = mesh.uv_layers.new(name=name)
+            if layer is None:
+                print("WARNING: UV map is ignored because the maximum number of UV layers has been reached.")
+                break
+            layer.data.foreach_set('uv', squish(loop_uvs[uv_i]))
+        name = 'filler' if uv_i == 0 else 'filler.%03d' % uv_i
         layer = mesh.uv_layers.new(name=name)
 
-        if layer is None:
-            print("WARNING: UV map is ignored because the maximum number of UV layers has been reached.")
-            break
-
-        layer.data.foreach_set('uv', squish(loop_uvs[uv_i]))
+    zFightLayer = mesh.uv_layers.new(name="zFight")
+    uvData = np.ndarray((len(vert_locs) * 2))
+    for i in range(len(vert_locs)):
+        uvData[i*2] = 2*i/len(vert_locs) - 1
+        uvData[i*2+1] = vnode.render_index
+    zFightLayer.data.foreach_set('uv', uvData)
 
     for col_i in range(num_cols):
         name = 'Col' if col_i == 0 else 'Col.%03d' % col_i

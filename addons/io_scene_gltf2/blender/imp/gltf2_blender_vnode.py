@@ -31,6 +31,7 @@ def compute_vnodes(gltf):
     pick_bind_pose(gltf)
     prettify_bones(gltf)
     calc_bone_matrices(gltf)
+    calc_render_order(gltf)
 
 
 class VNode:
@@ -523,3 +524,60 @@ def calc_bone_matrices(gltf):
             visit(child)
 
     visit('root')
+
+def calc_render_order(gltf):
+    objects = []
+    floorDeco = []
+    wallDeco = []
+    walls = []
+    tiles = []
+
+    def visit(vnode_id):  # Depth-first walk
+        vnode = gltf.vnodes[vnode_id]
+        if vnode.name is not None:
+            if 'obj_type_' in vnode.name and 'tiles' not in vnode.name:
+                typeid = int(vnode.name[9:].split(".")[0].split("_")[0])
+                if typeid >= 9 and typeid <= 21:
+                    add_all_by_index(gltf, vnode_id, objects)
+                if typeid == 22:
+                    add_all_children(gltf, vnode_id, floorDeco)
+                if typeid >= 4 and typeid <= 8:
+                    add_all_children(gltf, vnode_id, wallDeco)
+                if typeid >= 0 and typeid <= 3:
+                    add_all_children(gltf, vnode_id, walls)
+            elif 'tiles' in vnode.name:
+                add_all_children(gltf, vnode_id, tiles)
+
+        for child in vnode.children:
+            visit(child)
+    visit('root')
+
+    objects = sorted(objects, key=lambda tuple: tuple[0])
+    objects = [obj[1] for obj in objects]
+    print(f"objects: {len(objects)}, floorDeco: {len(floorDeco)}, wallDeco: {len(wallDeco)}, walls: {len(walls)}, tiles: {len(tiles)}")
+    render_order = objects + floorDeco + wallDeco + walls + tiles
+
+    for index, node_id in enumerate(render_order):
+        gltf.vnodes[node_id].render_index = (2 * index)/len(render_order) - 1
+def add_all_children(gltf, vnodeid, list):
+    def visit(vnode_id):  # Depth-first walk
+        vnode = gltf.vnodes[vnode_id]
+        if vnode.type == VNode.Object:
+            list.append(vnode_id)
+
+        for child in vnode.children:
+            visit(child)
+    visit(vnodeid)
+
+def add_all_by_index(gltf, vnodeid, list):
+    def visit(vnode_id):  # Depth-first walk
+        vnode = gltf.vnodes[vnode_id]
+        # if '45047' not in vnode.name and '45046' not in vnode.name:
+        #     print(vnode.name)
+        if vnode.type == VNode.Object is not None and vnode.name is not None:
+            index = vnode.name.split("_")[-1]
+            list.append((index, vnode_id))
+
+        for child in vnode.children:
+            visit(child)
+    visit(vnodeid)

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 bl_info = {
-    'name': 'glTF 2.0 format',
+    'name': 'glTF 2.0 format for OSRSVR',
     'author': 'Julien Duroure, Scurest, Norbert Nopper, Urs Hanselmann, Moritz Becher, Benjamin Schmithüsen, Jim Eckerlein, and many external contributors',
     "version": (3, 5, 27),
     'blender': (3, 5, 0),
@@ -1384,7 +1384,7 @@ class GLTF_AddonPreferences(bpy.types.AddonPreferences):
         row.prop(self, "KHR_materials_variants_ui", text="Material Variants")
 
 def menu_func_import(self, context):
-    self.layout.operator(ImportGLTF2.bl_idname, text='glTF 2.0 (.glb/.gltf)')
+    self.layout.operator(ImportGLTF2.bl_idname, text='glTF 2.0 for OSRSVR (.glb/.gltf)')
 
 
 classes = (

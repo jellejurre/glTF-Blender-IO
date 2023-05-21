@@ -24,7 +24,7 @@ def create_gltf_ao_group(operator, group_name):
 
     return gltf_ao_group
 
-class NODE_OT_GLTF_SETTINGS(bpy.types.Operator):
+class NODE_OT_GLTF_OSRS_SETTINGS(bpy.types.Operator):
     bl_idname = "node.gltf_settings_node_operator"
     bl_label  = "glTF Material Output"
     bl_description = "Add a node to the active tree for glTF export"
@@ -35,7 +35,7 @@ class NODE_OT_GLTF_SETTINGS(bpy.types.Operator):
         return space.type == "NODE_EDITOR" \
             and context.object and context.object.active_material \
             and context.object.active_material.use_nodes is True \
-            and bpy.context.preferences.addons['io_scene_gltf2'].preferences.settings_node_ui is True
+            and bpy.context.preferences.addons['io_scene_gltf2_osrs'].preferences.settings_node_ui is True
 
     def execute(self, context):
         gltf_settings_node_name = get_gltf_node_name()
@@ -50,7 +50,7 @@ class NODE_OT_GLTF_SETTINGS(bpy.types.Operator):
 
 
 def add_gltf_settings_to_menu(self, context) :
-    if bpy.context.preferences.addons['io_scene_gltf2'].preferences.settings_node_ui is True:
+    if bpy.context.preferences.addons['io_scene_gltf2_osrs'].preferences.settings_node_ui is True:
         self.layout.operator("node.gltf_settings_node_operator")
 
 ################################### KHR_materials_variants ####################
@@ -78,7 +78,7 @@ class SCENE_PT_gltf2_variants(bpy.types.Panel):
 
     @classmethod
     def poll(self, context):
-        return bpy.context.preferences.addons['io_scene_gltf2'].preferences.KHR_materials_variants_ui is True
+        return bpy.context.preferences.addons['io_scene_gltf2_osrs'].preferences.KHR_materials_variants_ui is True
 
     def draw(self, context):
         layout = self.layout
@@ -308,7 +308,7 @@ class MESH_PT_gltf2_mesh_variants(bpy.types.Panel):
 
     @classmethod
     def poll(self, context):
-        return bpy.context.preferences.addons['io_scene_gltf2'].preferences.KHR_materials_variants_ui is True \
+        return bpy.context.preferences.addons['io_scene_gltf2_osrs'].preferences.KHR_materials_variants_ui is True \
             and len(bpy.context.object.material_slots) > 0
 
     def draw(self, context):
@@ -448,7 +448,7 @@ class SCENE_OT_gltf2_remove_material_variant(bpy.types.Operator):
 ###############################################################################
 
 def register():
-    bpy.utils.register_class(NODE_OT_GLTF_SETTINGS)
+    bpy.utils.register_class(NODE_OT_GLTF_OSRS_SETTINGS)
     bpy.types.NODE_MT_category_SH_NEW_OUTPUT.append(add_gltf_settings_to_menu)
 
 def variant_register():
@@ -476,7 +476,7 @@ def variant_register():
     bpy.types.Scene.gltf2_active_variant = bpy.props.IntProperty()
 
 def unregister():
-    bpy.utils.unregister_class(NODE_OT_GLTF_SETTINGS)
+    bpy.utils.unregister_class(NODE_OT_GLTF_OSRS_SETTINGS)
 
 def variant_unregister():
     bpy.utils.unregister_class(SCENE_OT_gltf2_variant_add)

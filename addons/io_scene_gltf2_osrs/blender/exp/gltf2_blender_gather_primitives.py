@@ -234,7 +234,7 @@ def __gather_extensions(blender_mesh,
                         export_settings):
     extensions = {}
 
-    if bpy.context.preferences.addons['io_scene_gltf2'].preferences.KHR_materials_variants_ui is False:
+    if bpy.context.preferences.addons['io_scene_gltf2_osrs'].preferences.KHR_materials_variants_ui is False:
         return None
 
     if bpy.data.scenes[0].get('gltf2_KHR_materials_variants_variants') is None:

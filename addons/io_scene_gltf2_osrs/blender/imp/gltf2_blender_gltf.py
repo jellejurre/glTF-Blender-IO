@@ -248,8 +248,8 @@ class BlenderGlTF():
 
         gltf.KHR_materials_variants = True
         # If there is no KHR_materials_variants data in scene, create it
-        if bpy.context.preferences.addons['io_scene_gltf2'].preferences.KHR_materials_variants_ui is False:
-            bpy.context.preferences.addons['io_scene_gltf2'].preferences.KHR_materials_variants_ui = True
+        if bpy.context.preferences.addons['io_scene_gltf2_osrs'].preferences.KHR_materials_variants_ui is False:
+            bpy.context.preferences.addons['io_scene_gltf2_osrs'].preferences.KHR_materials_variants_ui = True
             # Setting preferences as dirty, to be sure that option is saved
             bpy.context.preferences.is_dirty = True
 

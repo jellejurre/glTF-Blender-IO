@@ -1416,7 +1416,7 @@ def register():
     # bpy.utils.register_module(__name__)
 
     blender_ui.register()
-    if bpy.context.preferences.addons['io_scene_gltf2'].preferences.KHR_materials_variants_ui is True:
+    if bpy.context.preferences.addons['io_scene_gltf2_osrs'].preferences.KHR_materials_variants_ui is True:
         blender_ui.variant_register()
 
     # add to the export / import menu
@@ -1427,7 +1427,7 @@ def register():
 def unregister():
     import io_scene_gltf2.blender.com.gltf2_blender_ui as blender_ui
     blender_ui.unregister()
-    if bpy.context.preferences.addons['io_scene_gltf2'].preferences.KHR_materials_variants_ui is True:
+    if bpy.context.preferences.addons['io_scene_gltf2_osrs'].preferences.KHR_materials_variants_ui is True:
         blender_ui.variant_unregister()
 
     for c in classes:

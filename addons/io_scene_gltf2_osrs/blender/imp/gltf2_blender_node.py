@@ -244,6 +244,10 @@ class BlenderNode():
         if pynode.skin is not None:
             BlenderNode.setup_skinning(gltf, pynode, obj)
 
+        if not hasattr(gltf, "material_cache"):
+            gltf.material_cache = set()
+        gltf.material_cache.update(mesh.materials)
+
         return obj
 
     @staticmethod

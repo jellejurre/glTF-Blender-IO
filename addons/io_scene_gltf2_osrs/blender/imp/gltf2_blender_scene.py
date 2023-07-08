@@ -46,6 +46,18 @@ class BlenderScene():
         gltf.display_current_node = 0  # for debugging
         BlenderNode.create_vnode(gltf, 'root')
 
+        # for material in gltf.material_cache:
+        #     if material.node_tree:
+        #         print("material:" + str(material.name))
+        #         for x in material.node_tree.nodes:
+        #             if x.type == 'TEX_IMAGE':
+        #                 if not ("Specular" in x.image.name):
+        #                     checksum = sum(x.image.pixels)
+        #                     x.image.name = str(int(checksum))
+        #                     # change png
+        #                     print(" texture: " + str(x.image.name))
+        #     if vnode.type == VNode.Object:
+
         # User extensions before scene creation
         gltf_scene = None
         if gltf.data.scene is not None:

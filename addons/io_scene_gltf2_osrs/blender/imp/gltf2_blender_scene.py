@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import bpy
-
+import bmesh
+from mathutils import Matrix, Vector
 from .gltf2_blender_node import BlenderNode
 from .gltf2_blender_animation import BlenderAnimation
 from .gltf2_blender_vnode import VNode, compute_vnodes
@@ -58,6 +59,7 @@ class BlenderScene():
         #                     print(" texture: " + str(x.image.name))
         #     if vnode.type == VNode.Object:
 
+
         # User extensions before scene creation
         gltf_scene = None
         if gltf.data.scene is not None:
@@ -76,6 +78,44 @@ class BlenderScene():
             bpy.ops.object.mode_set(mode='OBJECT')
         BlenderScene.select_imported_objects(gltf)
         BlenderScene.set_active_object(gltf)
+
+        mesh_objects = {}
+        for ob in bpy.data.objects:
+            if ob.type == 'MESH':
+                if "tiles" in ob.name or "type" in ob.name:
+                    continue
+                name = ob.name.split(".")[0]
+                id = name.split("_")[1]
+                type = ob.parent.name.split("_")[2]
+                rotatstring = name.split("_")[4]
+                if (type, id, rotatstring) not in mesh_objects.keys():
+                    mesh_objects[(type, id, rotatstring)] = []
+                mesh_objects[(type, id, rotatstring)].append(ob)
+
+        bpy.ops.object.select_all(action='DESELECT')
+        for key in mesh_objects.keys():
+            meshlist = mesh_objects[key]
+            for mesh in meshlist:
+                mesh.select_set(True)
+                bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')
+                mesh.select_set(False)
+
+        for key in mesh_objects.keys():
+            meshlist = mesh_objects[key]
+            for i in range(1, len(meshlist)):
+                mesh_obj = meshlist[i]
+
+                location = mesh_obj.location.copy()
+                parent = mesh_obj.parent
+                o = bpy.data.objects.new(mesh_obj.name, None)
+                bpy.context.scene.collection.objects.link(o)
+                o.location = location
+                o.parent = parent
+
+                mesh_data = mesh_obj.data
+                mesh_obj.data = None
+                bpy.data.meshes.remove(mesh_data)
+
 
     @staticmethod
     def create_animations(gltf):

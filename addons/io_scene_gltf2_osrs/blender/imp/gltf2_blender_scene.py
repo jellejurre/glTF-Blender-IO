@@ -82,15 +82,25 @@ class BlenderScene():
         mesh_objects = {}
         for ob in bpy.data.objects:
             if ob.type == 'MESH':
-                if "tiles" in ob.name or "type" in ob.name:
+                if "tiles" in ob.name or "type" in ob.name or "|" in ob.name:
                     continue
                 name = ob.name.split(".")[0]
+                material_node_tree = ob.data.materials[0].node_tree
+
+                # Find the first texture node
+                matname = "123456"
+                for node in material_node_tree.nodes:
+                    if 'Image Texture' in node.name and 'Specular' not in node.image.name:
+                        matname = node.image.name.split(".")[0]
+                        break
+
                 id = name.split("_")[1]
-                type = ob.parent.name.split("_")[2]
+                type = ob.parent.name.split(".")[0].split("_")[2]
                 rotatstring = name.split("_")[4]
-                if (type, id, rotatstring) not in mesh_objects.keys():
-                    mesh_objects[(type, id, rotatstring)] = []
-                mesh_objects[(type, id, rotatstring)].append(ob)
+                l = mesh_objects.get((type, id, rotatstring, matname), [])
+                l.append(ob)
+                mesh_objects[(type, id, rotatstring, matname)] = l
+                ob.name = name + "|" + str(matname)
 
         for key in mesh_objects.keys():
             meshlist = mesh_objects[key]
@@ -117,6 +127,8 @@ class BlenderScene():
                 mesh_data = mesh_obj.data
                 mesh_obj.data = None
                 bpy.data.meshes.remove(mesh_data)
+
+                o.name = o.name.split(".")[0]
 
 
     @staticmethod

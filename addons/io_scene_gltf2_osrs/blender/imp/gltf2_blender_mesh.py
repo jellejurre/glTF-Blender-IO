@@ -15,17 +15,14 @@
 import bpy
 from mathutils import Matrix
 import numpy as np
-
-from ...io.imp.gltf2_io_binary import BinaryData
-from ..com.gltf2_blender_extras import set_extras
-from .gltf2_blender_material import BlenderMaterial
+from ...io.imp.gltf2_io_user_extensions import import_user_extensions
 from ...io.com.gltf2_io_debug import print_console
+from ...io.imp.gltf2_io_binary import BinaryData
 from ...io.com.gltf2_io_constants import DataType, ComponentType
 from ...blender.com.gltf2_blender_conversion import get_attribute_type
+from ..com.gltf2_blender_extras import set_extras
+from .gltf2_blender_material import BlenderMaterial
 from .gltf2_io_draco_compression_extension import decode_primitive
-from io_scene_gltf2.io.imp.gltf2_io_user_extensions import import_user_extensions
-from ..com.gltf2_blender_ui import gltf2_KHR_materials_variants_primitive, gltf2_KHR_materials_variants_variant, gltf2_KHR_materials_variants_default_material
-
 
 class BlenderMesh():
     """Blender Mesh."""
@@ -33,9 +30,9 @@ class BlenderMesh():
         raise RuntimeError("%s should not be instantiated" % cls)
 
     @staticmethod
-    def create(gltf, mesh_idx, skin_idx, vnode):
+    def create(gltf, mesh_idx, skin_idx):
         """Mesh creation."""
-        return create_mesh(gltf, mesh_idx, skin_idx, vnode)
+        return create_mesh(gltf, mesh_idx, skin_idx)
 
 
 # Maximum number of TEXCOORD_n/COLOR_n sets to import
@@ -43,7 +40,7 @@ UV_MAX = 8
 COLOR_MAX = 8
 
 
-def create_mesh(gltf, mesh_idx, skin_idx, vnode):
+def create_mesh(gltf, mesh_idx, skin_idx):
     pymesh = gltf.data.meshes[mesh_idx]
 
     import_user_extensions('gather_import_mesh_before_hook', gltf, pymesh)
@@ -56,7 +53,7 @@ def create_mesh(gltf, mesh_idx, skin_idx, vnode):
     tmp_ob = None
     try:
         tmp_ob = bpy.data.objects.new('##gltf-import:tmp-object##', mesh)
-        do_primitives(gltf, mesh_idx, skin_idx, mesh, tmp_ob, vnode)
+        do_primitives(gltf, mesh_idx, skin_idx, mesh, tmp_ob)
         set_extras(mesh, gltf.data.meshes[mesh_idx].extras, exclude=['targetNames'])
 
     finally:
@@ -68,16 +65,15 @@ def create_mesh(gltf, mesh_idx, skin_idx, vnode):
     return mesh
 
 
-def do_primitives(gltf, mesh_idx, skin_idx, mesh, ob, vnode):
+def do_primitives(gltf, mesh_idx, skin_idx, mesh, ob):
     """Put all primitive data into the mesh."""
     pymesh = gltf.data.meshes[mesh_idx]
 
     # Use a class here, to be able to pass data by reference to hook (to be able to change them inside hook)
     class IMPORT_mesh_options:
-        def __init__(self, skinning: bool = True, skin_into_bind_pose: bool = True, use_auto_smooth: bool = True):
+        def __init__(self, skinning: bool = True, skin_into_bind_pose: bool = True):
             self.skinning = skinning
             self.skin_into_bind_pose = skin_into_bind_pose
-            self.use_auto_smooth = use_auto_smooth
 
     mesh_options = IMPORT_mesh_options()
     import_user_extensions('gather_import_mesh_options', gltf, mesh_options, pymesh, skin_idx)
@@ -89,6 +85,10 @@ def do_primitives(gltf, mesh_idx, skin_idx, mesh, ob, vnode):
     num_cols = 0
     num_joint_sets = 0
     attributes = set({})
+    attribute_data = []
+    attribute_type = {}
+    attribute_component_type = {}
+
     for prim in pymesh.primitives:
         if 'POSITION' not in prim.attributes:
             continue
@@ -112,7 +112,18 @@ def do_primitives(gltf, mesh_idx, skin_idx, mesh, ob, vnode):
         while i < COLOR_MAX and ('COLOR_%d' % i) in prim.attributes: i += 1
         num_cols = max(i, num_cols)
 
-        attributes.update(set([k for k in prim.attributes if k.startswith('_')]))
+        custom_attrs = [k for k in prim.attributes if k.startswith('_')]
+        for attr in custom_attrs:
+            if not attr in attributes:
+                attribute_type[attr] = gltf.data.accessors[prim.attributes[attr]].type
+                attribute_component_type[attr] = gltf.data.accessors[prim.attributes[attr]].component_type
+                attribute_data.append(
+                    np.empty(
+                        dtype=ComponentType.to_numpy_dtype(attribute_component_type[attr]),
+                        shape=(0, DataType.num_elements(attribute_type[attr])))
+                        )
+        attributes.update(set(custom_attrs))
+
 
     num_shapekeys = sum(sk_name is not None for sk_name in pymesh.shapekey_names)
 
@@ -145,13 +156,6 @@ def do_primitives(gltf, mesh_idx, skin_idx, mesh, ob, vnode):
         np.empty(dtype=np.float32, shape=(0,3))  # coordinate for each vert for each shapekey
         for _ in range(num_shapekeys)
     ]
-    attribute_data = []
-    for attr in attributes:
-        attribute_data.append(
-            np.empty(
-                dtype=ComponentType.to_numpy_dtype(gltf.data.accessors[prim.attributes[attr]].component_type),
-                shape=(0, DataType.num_elements(gltf.data.accessors[prim.attributes[attr]].type)))
-                )
 
     for prim in pymesh.primitives:
         prim.num_faces = 0
@@ -256,12 +260,13 @@ def do_primitives(gltf, mesh_idx, skin_idx, mesh, ob, vnode):
         for idx, attr in enumerate(attributes):
             if attr in prim.attributes:
                 attr_data = BinaryData.decode_accessor(gltf, prim.attributes[attr], cache=True)
+                attribute_data[idx] = np.concatenate((attribute_data[idx], attr_data[unique_indices]))
             else:
                 attr_data = np.zeros(
-                    (len(indices), DataType.num_elements(gltf.data.accessors[prim.attributes[attr]].type)),
-                     dtype=ComponentType.to_numpy_dtype(gltf.data.accessors[prim.attributes[attr]].component_type)
+                    (len(unique_indices), DataType.num_elements(attribute_type[attr])),
+                     dtype=ComponentType.to_numpy_dtype(attribute_component_type[attr])
                 )
-            attribute_data[idx] = np.concatenate((attribute_data[idx], attr_data))
+                attribute_data[idx] = np.concatenate((attribute_data[idx], attr_data))
 
     # Accessors are cached in case they are shared between primitives; clear
     # the cache now that all prims are done.
@@ -269,10 +274,10 @@ def do_primitives(gltf, mesh_idx, skin_idx, mesh, ob, vnode):
 
     if gltf.import_settings['merge_vertices']:
         vert_locs, vert_normals, vert_joints, vert_weights, \
-        sk_vert_locs, loop_vidxs, edge_vidxs = \
+        sk_vert_locs, loop_vidxs, edge_vidxs, attribute_data = \
             merge_duplicate_verts(
                 vert_locs, vert_normals, vert_joints, vert_weights, \
-                sk_vert_locs, loop_vidxs, edge_vidxs\
+                sk_vert_locs, loop_vidxs, edge_vidxs, attribute_data\
             )
 
     # ---------------
@@ -317,23 +322,15 @@ def do_primitives(gltf, mesh_idx, skin_idx, mesh, ob, vnode):
     mesh.polygons.foreach_set('loop_start', loop_starts)
     mesh.polygons.foreach_set('loop_total', loop_totals)
 
-    for uv_i in range(2):
-        if(uv_i < num_uvs):
-            name = 'UVMap' if uv_i == 0 else 'UVMap.%03d' % uv_i
-            layer = mesh.uv_layers.new(name=name)
-            if layer is None:
-                print("WARNING: UV map is ignored because the maximum number of UV layers has been reached.")
-                break
-            layer.data.foreach_set('uv', squish(loop_uvs[uv_i]))
-        name = 'filler' if uv_i == 0 else 'filler.%03d' % uv_i
+    for uv_i in range(num_uvs):
+        name = 'UVMap' if uv_i == 0 else 'UVMap.%03d' % uv_i
         layer = mesh.uv_layers.new(name=name)
 
-    zFightLayer = mesh.uv_layers.new(name="zFight")
-    uvData = np.ndarray((len(vert_locs) * 2))
-    for i in range(len(vert_locs)):
-        uvData[i*2] = 2*i/len(vert_locs) - 1
-        uvData[i*2+1] = vnode.render_index
-    zFightLayer.data.foreach_set('uv', uvData)
+        if layer is None:
+            print("WARNING: UV map is ignored because the maximum number of UV layers has been reached.")
+            break
+
+        layer.data.foreach_set('uv', squish(loop_uvs[uv_i]))
 
     for col_i in range(num_cols):
         name = 'Col' if col_i == 0 else 'Col.%03d' % col_i
@@ -467,14 +464,17 @@ def do_primitives(gltf, mesh_idx, skin_idx, mesh, ob, vnode):
     for idx, attr in enumerate(attributes):
 
         blender_attribute_data_type = get_attribute_type(
-            gltf.data.accessors[prim.attributes[attr]].component_type,
-            gltf.data.accessors[prim.attributes[attr]].type
+            attribute_component_type[attr],
+            attribute_type[attr]
         )
 
+        if blender_attribute_data_type is None:
+            continue
+
         blender_attribute = mesh.attributes.new(attr, blender_attribute_data_type, 'POINT')
-        if DataType.num_elements(gltf.data.accessors[prim.attributes[attr]].type) == 1:
+        if DataType.num_elements(attribute_type[attr]) == 1:
             blender_attribute.data.foreach_set('value', attribute_data[idx].flatten())
-        elif DataType.num_elements(gltf.data.accessors[prim.attributes[attr]].type) > 1:
+        elif DataType.num_elements(attribute_type[attr]) > 1:
             if blender_attribute_data_type in ["BYTE_COLOR", "FLOAT_COLOR"]:
                 blender_attribute.data.foreach_set('color', attribute_data[idx].flatten())
             else:
@@ -491,9 +491,7 @@ def do_primitives(gltf, mesh_idx, skin_idx, mesh, ob, vnode):
     mesh.update(calc_edges_loose=has_loose_edges)
 
     if has_normals:
-        mesh.create_normals_split()
         mesh.normals_split_custom_set_from_vertices(vert_normals)
-        mesh.use_auto_smooth = mesh_options.use_auto_smooth
 
 
 def points_edges_tris(mode, indices):
@@ -618,7 +616,22 @@ def skin_into_bind_pose(gltf, skin_idx, vert_joints, vert_weights, locs, vert_no
         for i in range(4):
             skinning_mats += ws[:, i].reshape(len(ws), 1, 1) * joint_mats[js[:, i]]
             weight_sums += ws[:, i]
-    # Normalize weights to one; necessary for old files / quantized weights
+
+    # Some invalid files have 0 weight sum.
+    # To avoid to have this vertices at 0.0 / 0.0 / 0.0
+    # We set all weight ( aka 1.0 ) to the first bone
+    zeros_indices = np.where(weight_sums == 0)[0]
+    if zeros_indices.shape[0] > 0:
+        print_console('ERROR', 'File is invalid: Some vertices are not assigned to bone(s) ')
+        vert_weights[0][:, 0][zeros_indices] = 1.0 # Assign to first bone with all weight
+
+        # Reprocess IBM for these vertices
+        skinning_mats[zeros_indices] = np.zeros((4, 4), dtype=np.float32)
+        for js, ws in zip(vert_joints, vert_weights):
+            for i in range(4):
+                skinning_mats[zeros_indices] += ws[:, i][zeros_indices].reshape(len(ws[zeros_indices]), 1, 1) * joint_mats[js[:, i][zeros_indices]]
+                weight_sums[zeros_indices] += ws[:, i][zeros_indices]
+
     skinning_mats /= weight_sums.reshape(num_verts, 1, 1)
 
     skinning_mats_3x3 = skinning_mats[:, :3, :3]
@@ -648,7 +661,8 @@ def set_poly_smoothing(gltf, pymesh, mesh, vert_normals, loop_vidxs):
     num_polys = len(mesh.polygons)
 
     if gltf.import_settings['import_shading'] == "FLAT":
-        # Polys are flat by default; don't have to do anything
+        # Polys are smooth by default, setting to flat
+        mesh.shade_flat()
         return
 
     if gltf.import_settings['import_shading'] == "SMOOTH":
@@ -707,7 +721,7 @@ def set_poly_smoothing(gltf, pymesh, mesh, vert_normals, loop_vidxs):
     mesh.polygons.foreach_set('use_smooth', poly_smooths)
 
 
-def merge_duplicate_verts(vert_locs, vert_normals, vert_joints, vert_weights, sk_vert_locs, loop_vidxs, edge_vidxs):
+def merge_duplicate_verts(vert_locs, vert_normals, vert_joints, vert_weights, sk_vert_locs, loop_vidxs, edge_vidxs, attribute_data):
     # This function attempts to invert the splitting done when exporting to
     # glTF. Welds together verts with the same per-vert data (but possibly
     # different per-loop data).
@@ -762,10 +776,16 @@ def merge_duplicate_verts(vert_locs, vert_normals, vert_joints, vert_weights, sk
         dots['sk%dy' % i] = locs[:, 1]
         dots['sk%dz' % i] = locs[:, 2]
 
-    unique_dots, inv_indices = np.unique(dots, return_inverse=True)
+    unique_dots, unique_ind, inv_indices = np.unique(dots, return_index=True, return_inverse=True)
 
     loop_vidxs = inv_indices[loop_vidxs]
     edge_vidxs = inv_indices[edge_vidxs]
+
+    # We don't split vertices only because of custom attribute
+    # If 2 vertices have same data (pos, normals, etc...) except custom attribute, we
+    # keep 1 custom attribute, arbitrary
+    for idx, i in enumerate(attribute_data):
+        attribute_data[idx] = attribute_data[idx][unique_ind]
 
     vert_locs = np.empty((len(unique_dots), 3), dtype=np.float32)
     vert_locs[:, 0] = unique_dots['x']
@@ -793,4 +813,4 @@ def merge_duplicate_verts(vert_locs, vert_normals, vert_joints, vert_weights, sk
         sk_vert_locs[i][:, 1] = unique_dots['sk%dy' % i]
         sk_vert_locs[i][:, 2] = unique_dots['sk%dz' % i]
 
-    return vert_locs, vert_normals, vert_joints, vert_weights, sk_vert_locs, loop_vidxs, edge_vidxs
+    return vert_locs, vert_normals, vert_joints, vert_weights, sk_vert_locs, loop_vidxs, edge_vidxs, attribute_data

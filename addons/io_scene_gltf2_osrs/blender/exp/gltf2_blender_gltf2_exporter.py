@@ -11,21 +11,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+import bpy
 import re
 import os
-import urllib.parse
 from typing import List
 
 from ... import get_version_string
-from io_scene_gltf2.io.com.gltf2_io_path import path_to_uri
-from io_scene_gltf2.io.com import gltf2_io
-from io_scene_gltf2.io.com import gltf2_io_extensions
-from io_scene_gltf2.io.exp import gltf2_io_binary_data
-from io_scene_gltf2.io.exp import gltf2_io_buffer
-from io_scene_gltf2.io.exp import gltf2_io_image_data
-from io_scene_gltf2.blender.exp import gltf2_blender_export_keys
-from io_scene_gltf2.io.exp.gltf2_io_user_extensions import export_user_extensions
+from ...io.com import gltf2_io, gltf2_io_extensions
+from ...io.com.gltf2_io_path import path_to_uri, uri_to_path
+from ...io.com.gltf2_io_constants import ComponentType, DataType
+from ...io.exp import gltf2_io_binary_data, gltf2_io_buffer, gltf2_io_image_data
+from ...io.exp.gltf2_io_user_extensions import export_user_extensions
+from .gltf2_blender_gather_accessors import gather_accessor
+from .material.gltf2_blender_gather_image import get_gltf_image_from_blender_image
 
+class AdditionalData:
+    def __init__(self):
+        additional_textures = []
 
 class GlTF2Exporter:
     """
@@ -38,7 +41,7 @@ class GlTF2Exporter:
         self.export_settings = export_settings
         self.__finalized = False
 
-        copyright = export_settings[gltf2_blender_export_keys.COPYRIGHT] or None
+        copyright = export_settings['gltf_copyright'] or None
         asset = gltf2_io.Asset(
             copyright=copyright,
             extensions=None,
@@ -70,6 +73,9 @@ class GlTF2Exporter:
             skins=[],
             textures=[]
         )
+
+
+        self.additional_data = AdditionalData()
 
         self.__buffer = gltf2_io_buffer.Buffer()
         self.__images = {}
@@ -125,11 +131,11 @@ class GlTF2Exporter:
             if is_glb:
                 uri = None
             elif output_path and buffer_name:
-                with open(output_path + buffer_name, 'wb') as f:
+                with open(output_path + uri_to_path(buffer_name), 'wb') as f:
                     f.write(self.__buffer.to_bytes())
                 uri = buffer_name
             else:
-                uri = self.__buffer.to_embed_string()
+                pass # This is no more possible, we don't export embedded buffers
 
             buffer = gltf2_io.Buffer(
                 byte_length=self.__buffer.byte_length,
@@ -158,17 +164,186 @@ class GlTF2Exporter:
         """
         Write all images.
         """
-        output_path = self.export_settings[gltf2_blender_export_keys.TEXTURE_DIRECTORY]
+        output_path = self.export_settings['gltf_texturedirectory']
 
         if self.__images:
             os.makedirs(output_path, exist_ok=True)
 
         for name, image in self.__images.items():
-            dst_path = output_path + "/" + name + image.file_extension
+            dst_path = output_path + "/" + name
             with open(dst_path, 'wb') as f:
                 f.write(image.data)
 
-    def add_scene(self, scene: gltf2_io.Scene, active: bool = False):
+
+    def manage_gpu_instancing(self, node, also_mesh=False):
+        instances = {}
+        for child_idx in node.children:
+            child = self.__gltf.nodes[child_idx]
+            if child.children:
+                continue
+            if child.mesh is not None and child.mesh not in instances.keys():
+                instances[child.mesh] = []
+            if child.mesh is not None:
+                instances[child.mesh].append(child_idx)
+
+        # For now, manage instances only if there are all children of same object
+        # And this instances don't have any children
+        instances = {k:v for k, v in instances.items() if len(v) > 1}
+
+        holders = []
+        if len(instances.keys()) == 1 and also_mesh is False:
+            # There is only 1 set of instances. So using the parent as instance holder
+            holder = node
+            holders = [node]
+        elif len(instances.keys()) > 1 or (len(instances.keys()) == 1 and also_mesh is True):
+            for h in range(len(instances.keys())):
+                # Create a new node
+                n = gltf2_io.Node(
+                    camera=None,
+                    children=[],
+                    extensions=None,
+                    extras=None,
+                    matrix=None,
+                    mesh=None,
+                    name=node.name + "." + str(h),
+                    rotation=None,
+                    scale=None,
+                    skin=None,
+                    translation=None,
+                    weights=None,
+                )
+                n = self.__traverse_property(n)
+                idx = self.__to_reference(n)
+
+                # Add it to original empty
+                node.children.append(idx)
+                holders.append(self.__gltf.nodes[idx])
+
+        for idx, inst_key in enumerate(instances.keys()):
+            insts = instances[inst_key]
+            holder = holders[idx]
+
+            # Let's retrieve TRS of instances
+            translation = []
+            rotation = []
+            scale = []
+            for inst_node_idx in insts:
+                inst_node = self.__gltf.nodes[inst_node_idx]
+                t = inst_node.translation if inst_node.translation is not None else [0,0,0]
+                r = inst_node.rotation if inst_node.rotation is not None else [0,0,0,1]
+                s = inst_node.scale if inst_node.scale is not None else [1,1,1]
+                for i in t:
+                    translation.append(i)
+                for i in r:
+                    rotation.append(i)
+                for i in s:
+                    scale.append(i)
+
+            # Create Accessors for the extension
+            ext = {}
+            ext['attributes'] = {}
+            ext['attributes']['TRANSLATION'] = gather_accessor(
+                gltf2_io_binary_data.BinaryData.from_list(translation, ComponentType.Float),
+                ComponentType.Float,
+                len(translation) // 3,
+                None,
+                None,
+                DataType.Vec3,
+                None
+            )
+            ext['attributes']['ROTATION'] = gather_accessor(
+                gltf2_io_binary_data.BinaryData.from_list(rotation, ComponentType.Float),
+                ComponentType.Float,
+                len(rotation) // 4,
+                None,
+                None,
+                DataType.Vec4,
+                None
+            )
+            ext['attributes']['SCALE'] = gather_accessor(
+                gltf2_io_binary_data.BinaryData.from_list(scale, ComponentType.Float),
+                ComponentType.Float,
+                len(scale) // 3,
+                None,
+                None,
+                DataType.Vec3,
+                None
+            )
+
+            # Add extension to the Node, and traverse it
+            if not holder.extensions:
+                holder.extensions = {}
+            holder.extensions["EXT_mesh_gpu_instancing"] = gltf2_io_extensions.Extension('EXT_mesh_gpu_instancing', ext, False)
+            holder.mesh = inst_key
+            self.__traverse(holder.extensions)
+
+            # Remove children from original Empty
+            new_children = []
+            for child_idx in node.children:
+                if child_idx not in insts:
+                    new_children.append(child_idx)
+            node.children = new_children
+
+            self.nodes_idx_to_remove.extend(insts)
+
+
+    def manage_gpu_instancing_nodes(self, export_settings):
+        if export_settings['gltf_gpu_instances'] is True:
+            for scene_num in range(len(self.__gltf.scenes)):
+                # Modify the scene data in case of EXT_mesh_gpu_instancing export
+
+                self.nodes_idx_to_remove = []
+                for node_idx in self.__gltf.scenes[scene_num].nodes:
+                    node = self.__gltf.nodes[node_idx]
+                    if node.mesh is None:
+                        self.manage_gpu_instancing(node)
+                    else:
+                        self.manage_gpu_instancing(node, also_mesh=True)
+                    for child_idx in node.children:
+                        child = self.__gltf.nodes[child_idx]
+                        self.manage_gpu_instancing(child, also_mesh=child.mesh is not None)
+
+                # Slides other nodes index
+
+                self.nodes_idx_to_remove.sort()
+                for node_idx in self.__gltf.scenes[scene_num].nodes:
+                    self.recursive_slide_node_idx(node_idx)
+
+                new_node_list = []
+                for node_idx in self.__gltf.scenes[scene_num].nodes:
+                    len_ = len([i for i in self.nodes_idx_to_remove if i < node_idx])
+                    new_node_list.append(node_idx - len_)
+                self.__gltf.scenes[scene_num].nodes = new_node_list
+
+                for skin in self.__gltf.skins:
+                    new_joint_list = []
+                    for node_idx in skin.joints:
+                        len_ = len([i for i in self.nodes_idx_to_remove if i < node_idx])
+                        new_joint_list.append(node_idx - len_)
+                    skin.joints = new_joint_list
+                    if skin.skeleton is not None:
+                        len_ = len([i for i in self.nodes_idx_to_remove if i < skin.skeleton])
+                        skin.skeleton = skin.skeleton - len_
+
+            # Remove animation channels that was targeting a node that will be removed
+            new_animation_list = []
+            for animation in self.__gltf.animations:
+                new_channel_list = []
+                for channel in animation.channels:
+                    if channel.target.node not in self.nodes_idx_to_remove:
+                        new_channel_list.append(channel)
+                animation.channels = new_channel_list
+                if len(animation.channels) > 0:
+                    new_animation_list.append(animation)
+            self.__gltf.animations = new_animation_list
+
+            #TODO: remove unused animation accessors?
+
+            # And now really remove nodes
+            self.__gltf.nodes = [node for idx, node in enumerate(self.__gltf.nodes) if idx not in self.nodes_idx_to_remove]
+
+
+    def add_scene(self, scene: gltf2_io.Scene, active: bool = False, export_settings=None):
         """
         Add a scene to the glTF.
 
@@ -180,15 +355,43 @@ class GlTF2Exporter:
         if self.__finalized:
             raise RuntimeError("Tried to add scene to finalized glTF file")
 
-        # for node in scene.nodes:
-        #     self.__traverse(node)
         scene_num = self.__traverse(scene)
         if active:
             self.__gltf.scene = scene_num
 
+    def recursive_slide_node_idx(self, node_idx):
+        node = self.__gltf.nodes[node_idx]
+
+        new_node_children = []
+        for child_idx in node.children:
+            len_ = len([i for i in self.nodes_idx_to_remove if i < child_idx])
+            new_node_children.append(child_idx - len_)
+
+
+        for child_idx in node.children:
+            self.recursive_slide_node_idx(child_idx)
+
+        node.children = new_node_children
+
     def traverse_unused_skins(self, skins):
         for s in skins:
             self.__traverse(s)
+
+    def traverse_additional_textures(self):
+        if self.export_settings['gltf_unused_textures'] is True:
+            tab = []
+            for tex in self.export_settings['additional_texture_export']:
+                res = self.__traverse(tex)
+                tab.append(res)
+
+            self.additional_data.additional_textures = tab
+
+    def traverse_additional_images(self):
+        if self.export_settings['gltf_unused_images']:
+            for img in [img for img in bpy.data.images if img.source != "VIEWER"]:
+                # TODO manage full / partial / custom via hook ...
+                if img.name not in self.export_settings['exported_images'].keys():
+                    self.__traverse(get_gltf_image_from_blender_image(img.name, self.export_settings))
 
     def add_animation(self, animation: gltf2_io.Animation):
         """
@@ -230,7 +433,7 @@ class GlTF2Exporter:
         name = image.adjusted_name()
         count = 1
         regex = re.compile(r"-\d+$")
-        while name in self.__images.keys():
+        while name + image.file_extension in self.__images.keys():
             regex_found = re.findall(regex, name)
             if regex_found:
                 name = re.sub(regex, "-" + str(count), name)
@@ -240,13 +443,13 @@ class GlTF2Exporter:
             count += 1
         # TODO: allow embedding of images (base64)
 
-        self.__images[name] = image
+        self.__images[name + image.file_extension] = image
 
-        texture_dir = self.export_settings[gltf2_blender_export_keys.TEXTURE_DIRECTORY]
+        texture_dir = self.export_settings['gltf_texturedirectory']
         abs_path = os.path.join(texture_dir, name + image.file_extension)
         rel_path = os.path.relpath(
             abs_path,
-            start=self.export_settings[gltf2_blender_export_keys.FILE_DIRECTORY],
+            start=self.export_settings['gltf_filedirectory'],
         )
         return path_to_uri(rel_path)
 
@@ -268,14 +471,7 @@ class GlTF2Exporter:
     def traverse_extensions(self):
         self.__traverse(self.__gltf.extensions)
 
-    def __traverse(self, node):
-        """
-        Recursively traverse a scene graph consisting of gltf compatible elements.
-
-        The tree is traversed downwards until a primitive is reached. Then any ChildOfRoot property
-        is stored in the according list in the glTF and replaced with a index reference in the upper level.
-        """
-        def __traverse_property(node):
+    def __traverse_property(self, node):
             for member_name in [a for a in dir(node) if not a.startswith('__') and not callable(getattr(node, a))]:
                 new_value = self.__traverse(getattr(node, member_name))
                 setattr(node, member_name, new_value)  # usually this is the same as before
@@ -287,9 +483,17 @@ class GlTF2Exporter:
                 #         self.__append_unique_and_get_index(self.__gltf.extensions_required, extension_name)
             return node
 
+
+    def __traverse(self, node):
+        """
+        Recursively traverse a scene graph consisting of gltf compatible elements.
+
+        The tree is traversed downwards until a primitive is reached. Then any ChildOfRoot property
+        is stored in the according list in the glTF and replaced with a index reference in the upper level.
+        """
         # traverse nodes of a child of root property type and add them to the glTF root
         if type(node) in self.__childOfRootPropertyTypeLookup:
-            node = __traverse_property(node)
+            node = self.__traverse_property(node)
             idx = self.__to_reference(node)
             # child of root properties are only present at root level --> replace with index in upper level
             return idx
@@ -307,7 +511,7 @@ class GlTF2Exporter:
 
         # traverse into any other property
         if type(node) in self.__propertyTypeLookup:
-            return __traverse_property(node)
+            return self.__traverse_property(node)
 
         # binary data needs to be moved to a buffer and referenced with a buffer view
         if isinstance(node, gltf2_io_binary_data.BinaryData):
@@ -341,3 +545,38 @@ class GlTF2Exporter:
 
         # do nothing for any type that does not match a glTF schema (primitives)
         return node
+
+def fix_json(obj):
+    # TODO: move to custom JSON encoder
+    fixed = obj
+    if isinstance(obj, dict):
+        fixed = {}
+        for key, value in obj.items():
+            if key == 'extras' and value is not None:
+                fixed[key] = value
+                continue
+            if not __should_include_json_value(key, value):
+                continue
+            fixed[key] = fix_json(value)
+    elif isinstance(obj, list):
+        fixed = []
+        for value in obj:
+            fixed.append(fix_json(value))
+    elif isinstance(obj, float):
+        # force floats to int, if they are integers (prevent INTEGER_WRITTEN_AS_FLOAT validator warnings)
+        if int(obj) == obj:
+            return int(obj)
+    return fixed
+
+def __should_include_json_value(key, value):
+    allowed_empty_collections = ["KHR_materials_unlit", "KHR_materials_specular"]
+
+    if value is None:
+        return False
+    elif __is_empty_collection(value) and key not in allowed_empty_collections:
+        return False
+    return True
+
+
+def __is_empty_collection(value):
+    return (isinstance(value, dict) or isinstance(value, list)) and len(value) == 0

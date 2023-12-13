@@ -15,16 +15,14 @@
 import bpy
 import math
 from typing import Optional, List, Dict, Any
-
-from io_scene_gltf2.blender.exp.gltf2_blender_gather_cache import cached
+from ...io.com import gltf2_io_lights_punctual
+from ...io.com import gltf2_io_debug
 from ..com.gltf2_blender_extras import generate_extras
 from ..com.gltf2_blender_conversion import PBR_WATTS_TO_LUMENS
-
-from io_scene_gltf2.io.com import gltf2_io_lights_punctual
-from io_scene_gltf2.io.com import gltf2_io_debug
-
-from io_scene_gltf2.blender.exp import gltf2_blender_gather_light_spots
-from io_scene_gltf2.blender.exp import gltf2_blender_search_node_tree
+from ..com.gltf2_blender_default import LIGHTS
+from .gltf2_blender_gather_cache import cached
+from . import gltf2_blender_gather_light_spots
+from .material import gltf2_blender_search_node_tree
 
 
 @cached
@@ -68,7 +66,7 @@ def __gather_intensity(blender_lamp, export_settings) -> Optional[float]:
         if blender_lamp.type != 'SUN':
             # When using cycles, the strength should be influenced by a LightFalloff node
             result = gltf2_blender_search_node_tree.from_socket(
-                emission_node.inputs.get("Strength"),
+                gltf2_blender_search_node_tree.NodeSocket(emission_node.inputs.get("Strength"), blender_lamp),
                 gltf2_blender_search_node_tree.FilterByType(bpy.types.ShaderNodeLightFalloff)
             )
             if result:
@@ -109,11 +107,7 @@ def __gather_spot(blender_lamp, export_settings) -> Optional[gltf2_io_lights_pun
 
 
 def __gather_type(blender_lamp, _) -> str:
-    return {
-        "POINT": "point",
-        "SUN": "directional",
-        "SPOT": "spot"
-    }[blender_lamp.type]
+    return LIGHTS[blender_lamp.type]
 
 
 def __gather_range(blender_lamp, export_settings) -> Optional[float]:
@@ -144,7 +138,7 @@ def __get_cycles_emission_node(blender_lamp) -> Optional[bpy.types.ShaderNodeEmi
                 if not currentNode.is_active_output:
                     continue
                 result = gltf2_blender_search_node_tree.from_socket(
-                    currentNode.inputs.get("Surface"),
+                    gltf2_blender_search_node_tree.NodeSocket(currentNode.inputs.get("Surface"), blender_lamp),
                     gltf2_blender_search_node_tree.FilterByType(bpy.types.ShaderNodeEmission)
                 )
                 if not result:

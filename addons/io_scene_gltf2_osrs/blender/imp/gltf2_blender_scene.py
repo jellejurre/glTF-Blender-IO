@@ -102,15 +102,13 @@ class BlenderScene():
                 mesh_objects[(type, id, rotatstring, matname)] = l
                 ob.name = name + "|" + str(matname)
 
+        bpy.ops.object.select_all(action='DESELECT')
         for key in mesh_objects.keys():
             meshlist = mesh_objects[key]
             for mesh in meshlist:
-                me = mesh.data
-                mw = mesh.matrix_world
-                origin = sum((v.co for v in me.vertices), Vector()) / len(me.vertices)
-                T = Matrix.Translation(-origin)
-                me.transform(T)
-                mw.translation = mw @ origin
+                mesh.select_set(True)
+                bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')
+                mesh.select_set(False)
 
         for key in mesh_objects.keys():
             meshlist = mesh_objects[key]
